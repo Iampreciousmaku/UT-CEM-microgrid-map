@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>UT / CEM — Texas Microgrid Lab (External Data, Texas Mask, EIA Tooltips)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <!-- noUiSlider CSS -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/noUiSlider/15.7.0/nouislider.min.css"/>
+
+  <style>
+    :root{
+      --ut-burnt: #BF5700;
+      --bg-muted: #f5f5f6;
+      --map-ui-bg: rgba(255,255,255,0.96);
+      --ui-border: rgba(0,0,0,0.06);
+      --text: #222;
+
+      --tx345: #BF5700;
+      --txlow: #2b7aa1;
+      --gas: #ff8a33;
+      --coal: #7f7f7f;
+      --wind: #16a3b5;
+      --solar: #f2c94c;
+      --nuclear: #8a5fb0;
+      --dc: #2ca02c;
+    }
+
+    html,body {
+      height:100%;
+      margin:0;
+      padding:0;
+      font-family: Inter, Arial, Helvetica, sans-serif;
+      background:var(--bg-muted);
+      color:var(--text);
+      overflow:hidden;
+    }
+
+    #map {
+      height: 100vh;
+      width:100%;
+      margin:0;
+      padding:0;
+      position:relative;
+    }
+
+    /* Logo overlay (top-left) — using your filename as provided */.logo-overlay {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 1400; /* above map controls */
+      background: transparent;
+      padding: 0;
+      pointer-events: none;
+    }.logo-overlay img { height: 36px; display: block; }
+
+    /* Legend (bottom-left) */.legend-box {
+      position: absolute;
+      left: 14px;
+      bottom: 14px;
+      z-index: 1200;
+      background: var(--map-ui-bg);
+      padding: 10px;
+      border-radius: 10px;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.12);
+      border: 1px solid var(--ui-border);
+      width: 300px;
+    }.legend-row { display:flex; align-items:center; gap:10px; margin:6px 0; font-size:13px; }.legend-swatch { width:22px; height:12px; border-radius:3px; border:1px solid rgba(0,0,0,0.06); }.legend-circle { width:14px; height:14px; border-radius:50%; display:inline-block; margin-right:6px; }
+
+    /* Controls (bottom-right) */.controls-box {
+      position: absolute;
+      right: 14px;
+      bottom: 14px;
+      z-index: 1200;
+      background: var(--map-ui-bg);
+      padding: 10px;
+      border-radius: 10px;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.12);
+      border: 1px solid var(--ui-border);
+      width: 210px;
+      text-align: center;
+    }.controls-box button {
+      display:block; width:100%; margin:6px 0; padding:8px 10px;
+      border-radius:8px; border:1px solid var(--ui-border);
+      background:white; cursor:pointer; font-weight:600; color:var(--text);
+    }.controls-box button.primary { background:var(--ut-burnt); color:#fff; border:none; }
+
+    /* Timeline slider bottom-center */.timeline-overlay {
+      position: absolute;
+      left: 50%; transform: translateX(-50%);
+      bottom: 14px;
+      z-index: 1300;
+      background: var(--map-ui-bg);
+      padding: 8px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--ui-border);
+      box-shadow: 0 6px 18px rgba(0,0,0,0.08);
+      display:flex; gap:12px; align-items:center;
+    }.timeline-label { font-weight:700; color:var(--text); min-width:54px; }
+    #slider { width:420px; max-width:60vw; }
+
+    /* Ensure the layer control is visible and above tiles */.leaflet-control-layers { margin-top: 8px; margin-left: 8px; z-index: 1350; }.leaflet-top,.leaflet-bottom { z-index: 1300; }.leaflet-control-attribution { display: none; }.leaflet-popup-content-wrapper { font-size:13px; }
+
+    /* Simple status banner for debug (shows if external services fail) */
+    #status {
+      position: absolute; top: 10px; right: 10px; z-index: 1400;
+      background: rgba(255,255,255,0.9); border: 1px solid var(--ui-border);
+      padding: 6px 10px; border-radius: 8px; font-size: 12px; color: #333; display:none;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top-left logo — ensure this file exists next to the HTML (double.png as you noted) -->
+  <div class="logo-overlay">
+    <img src="ut_cem_logo.png.png" alt="UT CEM logo"/>
+  </div>
+
+  <div id="map" role="application" aria-label="Interactive Texas Grid Map"></div>
+
+  <!-- Timeline slider (bottom-center) -->
+  <div class="timeline-overlay" aria-hidden="false">
+    <div class="timeline-label">Year</div>
+    <div id="slider"></div>
+    <div id="sliderValue" style="min-width:56px; text-align:center; font-weight:700;">2025</div>
+  </div>
+
+  <!-- Legend (bottom-left) -->
+  <div class="legend-box" id="legend" aria-hidden="false">
+    <div class="legend-row"><div class="legend-swatch" style="background:var(--tx345)"></div><div>Transmission — 300+ kV</div></div>
+    <div class="legend-row"><div class="legend-swatch" style="background:var(--txlow)"></div><div>Transmission — &lt; 300 kV</div></div>
+    <div class="legend-row"><div class="legend-circle" style="background:var(--gas)"></div><div>Gas Plant</div></div>
+    <div class="legend-row"><div class="legend-circle" style="background:var(--coal)"></div><div>Coal Plant</div></div>
+    <div class="legend-row"><div class="legend-circle" style="background:var(--wind)"></div><div>Wind Farm</div></div>
+    <div class="legend-row"><div class="legend-circle" style="background:var(--solar)"></div><div>Solar Farm</div></div>
+    <div class="legend-row"><div class="legend-circle" style="background:var(--nuclear)"></div><div>Nuclear Plant</div></div>
+    <div class="legend-row"><div class="legend-swatch" style="background:var(--dc); width:14px; height:14px; border-radius:3px;"></div><div>Data Center (size by MW)</div></div>
+  </div>
+
+  <!-- Controls (bottom-right) -->
+  <div class="controls-box" role="region" aria-label="Map controls">
+    <button id="playPauseBtn" class="primary">⏯ Play Flows</button>
+    <button id="resetViewBtn">🔄 Reset View</button>
+    <button id="toggleMaskBtn">🗺️ Toggle Texas Mask</button>
+  </div>
+
+  <!-- Status/debug banner -->
+  <div id="status"></div>
+
+  <!-- JS libs (Esri Leaflet must load before we use L.esri) -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/noUiSlider/15.7.0/nouislider.min.js"></script>
+  <script src="https://unpkg.com/esri-leaflet@3.0.11/dist/esri-leaflet.js"></script>
+
+  <script>
+  const statusEl = document.getElementById('status');
+  function showStatus(msg) {
+    statusEl.textContent = msg;
+    statusEl.style.display = 'block';
+  }
+
+  // Config
+  const EIA_API_KEY = ""; // optional
+  const URL_TX_LINES = 'https://services3.arcgis.com/66u3n8SiUZhpdI3h/ArcGIS/rest/services/Electric_Power_Transmission_Lines/FeatureServer/0';
+  const URL_POWER_PLANTS = 'https://services3.arcgis.com/66u3n8SiUZhpdI3h/ArcGIS/rest/services/Power_Plants/FeatureServer/0';
+  const URL_DATA_CENTERS = 'https://services3.arcgis.com/66u3n8SiUZhpdI3h/ArcGIS/rest/services/Data_Centers/FeatureServer/0';
+  const URL_USA_STATES = 'https://services.arcgis.com/P3ePLMYs2RVChkJx/ArcGIS/rest/services/USA_States_Generalized/FeatureServer/0';
+
+  // Map init
+  const map = L.map('map', { zoomControl: true, attributionControl: true }).setView([31.0, -99.0], 6);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '© OpenStreetMap contributors' }).addTo(map);
+
+  const css = getComputedStyle(document.documentElement);
+  const styles = {
+    tx345: css.getPropertyValue('--tx345').trim() || '#BF5700',
+    txlow: css.getPropertyValue('--txlow').trim() || '#2b7aa1',
+    gas: css.getPropertyValue('--gas').trim() || '#ff8a33',
+    coal: css.getPropertyValue('--coal').trim() || '#7f7f7f',
+    wind: css.getPropertyValue('--wind').trim() || '#16a3b5',
+    solar: css.getPropertyValue('--solar').trim() || '#f2c94c',
+    nuclear: css.getPropertyValue('--nuclear').trim() || '#8a5fb0',
+    dc: css.getPropertyValue('--dc').trim() || '#2ca02c'
+  };
+
+  // Build layer control up front
+  const baseLayers = null;
+  const overlayLayers = {}; // filled as layers are created
+  const layerControl = L.control.layers(baseLayers, overlayLayers, { collapsed: false, position: 'topleft' }).addTo(map);
+
+  // Texas outline/mask
+  let texasOutline = null, texasMask = null, maskEnabled = false;
+
+  try {
+    L.esri.query({ url: URL_USA_STATES }).where("STATE_NAME = 'Texas'").run(function(err, fc) {
+        if (err || !fc || !fc.features || !fc.features.length) { showStatus('Texas boundary unavailable.'); return; }
+        const txGeom = fc.features[0].geometry;
+
+        texasOutline = L.geoJSON(txGeom, { style: { color: '#333', weight: 2.5, fillOpacity: 0.0 } });
+        const outlineGroup = L.layerGroup();
+        outlineGroup.on('add', () => { if (texasOutline) texasOutline.addTo(map); });
+        outlineGroup.on('remove', () => { if (texasOutline) map.removeLayer(texasOutline); });
+        layerControl.addOverlay(outlineGroup, 'Texas Outline');
+
+        // Build mask (world polygon with Texas hole)
+        const worldRing = [[85, -180], [85, 180], [-85, 180], [-85, -180]];
+        let txHole = [];
+        if (txGeom.type === 'Polygon') {
+          txHole = txGeom.coordinates[0].map(([lng, lat]) => [lat, lng]);
+        } else if (txGeom.type === 'MultiPolygon') {
+          let largest = txGeom.coordinates[0][0];
+          txGeom.coordinates.forEach(poly => { if (poly[0].length > largest.length) largest = poly[0]; });
+          txHole = largest.map(([lng, lat]) => [lat, lng]);
+        }
+        texasMask = L.polygon([worldRing, txHole], {
+          color: 'transparent', fillColor: 'rgba(0,0,0,0.15)', fillOpacity: 0.15, weight: 0, interactive: false
+        });
+
+        // Add outline by default
+        outlineGroup.addTo(map);
+      });
+  } catch (ex) {
+    showStatus('Esri service (Texas boundary) failed to load.');
+  }
+
+  document.getElementById('toggleMaskBtn').addEventListener('click', () => {
+    maskEnabled = !maskEnabled;
+    if (maskEnabled) { if (texasMask) texasMask.addTo(map); }
+    else { if (texasMask) map.removeLayer(texasMask); }
+  });
+
+  // Transmission (HIFLD)
+  let txTransmission;
+  try {
+    txTransmission = L.esri.featureLayer({
+      url: URL_TX_LINES,
+      where: "STATE = 'TX'",
+      style: function (feature) {
+        const p = feature.properties || {};
+        const kv = Number(p.VOLTAGE || p.VOLTAGE_KV || p.kV || p.KV || 0);
+        const is345 = kv >= 300;
+        return { color: is345 ? styles.tx345 : styles.txlow, weight: is345 ? 3.2 : 2.0, opacity: 0.95 };
+      }
+    }).addTo(map);
+    overlayLayers["TX Transmission (HIFLD)"] = txTransmission;
+    layerControl.addOverlay(txTransmission, "TX Transmission (HIFLD)");
+  } catch (ex) {
+    showStatus('Transmission layer failed to load.');
+  }
+
+  // Plants (HIFLD)
+  let plantsLayer, plantYearField = null, plantDateField = null;
+  try {
+    plantsLayer = L.esri.featureLayer({
+      url: URL_POWER_PLANTS,
+      where: "STATE = 'TX'",
+      pointToLayer: function (feature, latlng) {
+        const p = feature.properties || {};
+        const fuel = (p.PRIM_FUEL || p.FUEL || p.FUEL1 || p.FUEL_TYPE || '').toLowerCase();
+        const color =
+          fuel.includes('wind') ? styles.wind :
+          fuel.includes('solar') ? styles.solar :
+          fuel.includes('nuclear') ? styles.nuclear :
+          fuel.includes('coal') ? styles.coal :
+          styles.gas;
+        return L.circleMarker(latlng, { radius: 7, fillOpacity: 0.95, color, weight: 1 });
+      }
+    }).addTo(map);
+    overlayLayers["Power Plants (HIFLD)"] = plantsLayer;
+    layerControl.addOverlay(plantsLayer, "Power Plants (HIFLD)");
+
+    plantsLayer.metadata(function(err, md) {
+      if (md && md.fields) {
+        const by = Object.fromEntries(md.fields.map(f => [f.name, f]));
+        const candYear = ['YEAR','IN_SERVICE_YEAR','COMMISSION_YEAR','OPER_YEAR','OP_YEAR'];
+        const candDate = ['OPERDATE','IN_SERVICE_DATE','DATE_IN_SERVICE'];
+        plantYearField = candYear.find(f => by[f] && by[f].type !== 'esriFieldTypeDate') || plantYearField;
+        plantDateField = candDate.find(f => by[f] && by[f].type === 'esriFieldTypeDate') || plantDateField;
+      }
+    });
+
+    plantsLayer.on('click', async function(e) {
+      const p = e.layer.feature && e.layer.feature.properties ? e.layer.feature.properties : {};
+      const name = p.POWER_PLANT || p.NAME || 'Plant';
+      const fuel = p.PRIM_FUEL || p.FUEL || p.FUEL1 || 'N/A';
+      const capacity = p.CAPACITY_MW || p.NAMEPLATE || p.MW || 'N/A';
+      const eiaId = p.EIA_ID || p.PLANT_CODE || p.PLANT_ID || null;
+      e.layer.bindPopup(`<b>${name}</b><br>Fuel: ${fuel}<br>Capacity: ${capacity} MW${eiaId ? `<br>EIA ID: ${eiaId}` : ''}`).openPopup();
+    });
+  } catch (ex) {
+    showStatus('Power plants layer failed to load.');
+  }
+
+  // Data centers (HIFLD)
+  let dcsLayer, dcYearField = null, dcDateField = null;
+  try {
+    dcsLayer = L.esri.featureLayer({
+      url: URL_DATA_CENTERS,
+      where: "STATE = 'TX'",
+      pointToLayer: function (feature, latlng) {
+        const p = feature.properties || {};
+        const mw = Number(p.MW || p.POWER_MW || p.IT_LOAD_MW || p.CRITICAL_POWER_MW || 0);
+        let opacity = 0.7; let radius = 7;
+        if (mw >= 150) { opacity = 1.0; radius = 11; }
+        else if (mw >= 50) { opacity = 0.9; radius = 9; }
+        return L.circleMarker(latlng, { radius, fillOpacity: opacity, color: styles.dc, weight: 1.2 });
+      }
+    }).addTo(map);
+    overlayLayers["Data Centers (HIFLD)"] = dcsLayer;
+    layerControl.addOverlay(dcsLayer, "Data Centers (HIFLD)");
+
+    dcsLayer.metadata(function(err, md) {
+      if (md && md.fields) {
+        const by = Object.fromEntries(md.fields.map(f => [f.name, f]));
+        const candYear = ['YEAR','COMMISSION_YEAR','IN_SERVICE_YEAR','OPEN_YEAR','BUILD_YEAR'];
+        const candDate = ['IN_SERVICE_DATE','OPEN_DATE','DATE_OPENED'];
+        dcYearField = candYear.find(f => by[f] && by[f].type !== 'esriFieldTypeDate') || dcYearField;
+        dcDateField = candDate.find(f => by[f] && by[f].type === 'esriFieldTypeDate') || dcDateField;
+      }
+    });
+
+    dcsLayer.on('click', function(e) {
+      const p = e.layer.feature && e.layer.feature.properties ? e.layer.feature.properties : {};
+      const name = p.NAME || p.SITE_NAME || 'Data Center';
+      const company = p.COMPANY || p.OWNER || 'N/A';
+      const city = p.CITY || 'TX';
+      const mw = p.MW || p.POWER_MW || p.IT_LOAD_MW || 'N/A';
+      e.layer.bindPopup(`<b>${name}</b><br>Company: ${company}<br>City: ${city}<br>IT/Power Load: ${mw} MW`).openPopup();
+    });
+  } catch (ex) {
+    showStatus('Data centers layer failed to load.');
+  }
+
+  // Flows on transmission
+  const flowMarkersGroup = L.layerGroup().addTo(map);
+  const flows = [];
+  function resetFlowsFromTransmission() {
+    flowMarkersGroup.clearLayers();
+    flows.length = 0;
+    if (!txTransmission) return;
+
+    txTransmission.eachFeature(function(layer) {
+      const latlngs = layer.getLatLngs();
+      const flat = Array.isArray(latlngs[0]) ? latlngs.flat(2) : latlngs;
+      if (!flat || flat.length < 2) return;
+      const startXY = [flat[0].lng, flat[0].lat];
+      const endXY   = [flat[flat.length - 1].lng, flat[flat.length - 1].lat];
+      const baseCount = Math.max(1, Math.round(Math.hypot(endXY[0]-startXY[0], endXY[1]-startXY[1]) * 4));
+      const props = layer.feature && layer.feature.properties ? layer.feature.properties : {};
+      const kv = Number(props.VOLTAGE || props.VOLTAGE_KV || 0);
+      const col = kv >= 300 ? styles.tx345 : styles.txlow;
+      for (let p = 0; p < baseCount; p++) {
+        const start = p / baseCount;
+        const speed = 0.0008 + Math.random() * 0.0012;
+        const m = L.circleMarker(flat[0], { radius: 3.0, fillOpacity: 0.95, color: col, weight: 0.7 }).addTo(flowMarkersGroup);
+        flows.push({ latlngs: flat, progress: start, speed, marker: m });
+      }
+    });
+  }
+  function interpolateLatLng(latlngs, t) {
+    if (!latlngs || latlngs.length === 0) return null;
+    if (t <= 0) return latlngs[0];
+    if (t >= 1) return latlngs[latlngs.length - 1];
+    const segLens = []; let total = 0;
+    for (let i = 1; i < latlngs.length; i++) {
+      const a = latlngs[i - 1], b = latlngs[i];
+      const dx = b.lng - a.lng, dy = b.lat - a.lat;
+      const L = Math.hypot(dx, dy);
+      segLens.push(L); total += L;
+    }
+    let target = t * total, cum = 0;
+    for (let i = 0; i < segLens.length; i++) {
+      if (cum + segLens[i] >= target) {
+        const r = (target - cum) / segLens[i];
+        const a = latlngs[i], b = latlngs[i + 1];
+        return L.latLng(a.lat + (b.lat - a.lat) * r, a.lng + (b.lng - a.lng) * r);
+      }
+      cum += segLens[i];
+    }
+    return latlngs[latlngs.length - 1];
+  }
+  let animRunning = false, lastTime = null;
+  function animateFlows(timestamp) {
+    if (!animRunning) { lastTime = null; return; }
+    if (!lastTime) lastTime = timestamp;
+    const dt = timestamp - lastTime; lastTime = timestamp;
+    const factor = dt / 16.67;
+    flows.forEach(f => {
+      f.progress += f.speed * factor;
+      if (f.progress > 1) f.progress -= Math.floor(f.progress);
+      const pt = interpolateLatLng(f.latlngs, f.progress);
+      if (pt) f.marker.setLatLng(pt);
+    });
+    requestAnimationFrame(animateFlows);
+  }
+  document.getElementById('playPauseBtn').addEventListener('click', () => {
+    animRunning = !animRunning;
+    document.getElementById('playPauseBtn').textContent = animRunning ? '⏸ Pause Flows' : '⏯ Play Flows';
+    if (animRunning) requestAnimationFrame(animateFlows);
+    else lastTime = null;
+  });
+  document.getElementById('resetViewBtn').addEventListener('click', () => map.setView([31.0, -99.0], 6));
+  if (txTransmission) { txTransmission.on('load', resetFlowsFromTransmission); }
+  resetFlowsFromTransmission();
+
+  // Timeline filtering
+  const slider = document.getElementById('slider');
+  const sliderValue = document.getElementById('sliderValue');
+  const minYear = 1990;
+  const maxYear = new Date().getFullYear();
+  noUiSlider.create(slider, { start: [maxYear], connect: true, step: 1, range: { min: minYear, max: maxYear }, tooltips: true, format: { to: v => Math.round(v), from: v => Number(v) } });
+  function buildYearWhere(baseWhere, yearField, dateField, year) {
+    if (dateField) return `${baseWhere} AND ${dateField} <= DATE '${year}-12-31'`;
+    if (yearField) return `${baseWhere} AND ${yearField} <= ${year}`;
+    return baseWhere;
+  }
+  slider.noUiSlider.on('update', (values, handle) => {
+    const y = parseInt(values[handle], 10);
+    sliderValue.textContent = y;
+    if (plantsLayer) plantsLayer.setWhere(buildYearWhere("STATE = 'TX'", plantYearField, plantDateField, y));
+    if (dcsLayer) dcsLayer.setWhere(buildYearWhere("STATE = 'TX'", dcYearField, dcDateField, y));
+  });
+  slider.noUiSlider.set(maxYear);
+
+  // Fit to content
+  function fitToLayers() {
+    const group = L.featureGroup();
+    if (txTransmission) txTransmission.eachFeature(l => group.addLayer(l));
+    if (plantsLayer) plantsLayer.eachFeature(l => group.addLayer(l));
+    if (dcsLayer) dcsLayer.eachFeature(l => group.addLayer(l));
+    const b = group.getBounds();
+    if (b.isValid()) map.fitBounds(b.pad(0.12));
+  }
+  if (txTransmission) txTransmission.on('load', fitToLayers);
+  if (plantsLayer) plantsLayer.on('load', fitToLayers);
+  if (dcsLayer) dcsLayer.on('load', fitToLayers);
+  </script>
+</body>
+</html>

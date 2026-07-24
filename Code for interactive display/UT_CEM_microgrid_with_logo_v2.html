@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>CEM Microgrid — Fixed</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+
+<style>
+:root{
+  --ut:#BF5700;
+  --tx345:#BF5700;
+  --tx138:#2b7aa1;
+  --gas:#ff8a33;
+  --coal:#7f7f7f;
+  --wind:#16a3b5;
+  --solar:#f2c94c;
+  --nuclear:#8a5fb0;
+  --dc:#2ca02c;
+}
+
+/* page layout */
+html,body{height:100%;margin:0;font-family:Inter,Arial,Helvetica,sans-serif;background:#f5f5f6;color:#222;}
+/* header: thin, transparent blur (Option B) */
+.header-bar{
+  position:fixed;
+  top:8px; left:8px; right:8px;          /* slightly inset for elegant museum look */
+  height:48px;
+  z-index:1300;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  gap:12px;
+  padding:6px 14px;
+  background: rgba(255,255,255,0.45);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border-radius:8px;
+  border: 1px solid rgba(0,0,0,0.06);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.08);
+}
+
+/* header contents */
+.logo-svg{height:36px; width:auto; flex:0 0 auto;}
+.header-text{display:flex;flex-direction:column;align-items:center;line-height:1;}
+.header-title{font-weight:700;color:var(--ut);font-size:15px;}
+.header-sub{font-size:12px;color:#333;opacity:0.95;margin-top:2px;}
+
+/* map sits under header: top offset matches header + margin */
+#map{position:fixed; top:64px; left:0; right:0; bottom:0; z-index:1;}
+
+/* legend (no title) bottom-left */
+.legend{
+  position:fixed; left:16px; bottom:16px; z-index:1200;
+  background:rgba(255,255,255,0.95);
+  border-radius:10px; padding:10px 12px;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.12);
+  font-size:13px; line-height:1.4;
+}
+.row{display:flex;align-items:center;gap:8px;margin:6px 0;}
+.sw{width:20px;height:12px;border-radius:3px;border:1px solid rgba(0,0,0,0.06);}
+.dot{width:12px;height:12px;border-radius:50%;}
+
+/* push default Leaflet top-left controls below the header so they don't overlap */
+.leaflet-control-layers{ margin-top:76px; }
+
+/* responsive tweaks */
+@media (max-width:700px){
+  .header-title{font-size:13px;}
+  .header-sub{font-size:11px;}
+  .header-bar{left:6px;right:6px;height:44px;padding:6px 10px;}
+  #map{top:58px;}
+}
+</style>
+</head>
+<body>
+
+<!-- thin transparent header (Option B) with embedded SVG logo -->
+<div class="header-bar" role="banner" aria-label="CEM header">
+  <!-- simple museum-style SVG logo (keeps file self-contained) -->
+  <svg class="logo-svg" viewBox="0 0 200 48" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <g fill="none" fill-rule="evenodd">
+      <rect x="0" y="0" width="48" height="48" rx="6" fill="#fff" stroke="#BF5700" stroke-width="2"/>
+      <path d="M8 36 L16 14 L24 36 Z" fill="#BF5700"/>
+      <circle cx="36" cy="12" r="4" fill="#2f3b40"/>
+      <!-- small textual hint -->
+      <text x="56" y="19" font-family="Georgia, serif" font-size="14" fill="#BF5700">The University of Texas at Austin</text>
+    </g>
+  </svg>
+
+  <div class="header-text" role="heading" aria-level="1">
+    <div class="header-title">Center for Electromechanics — Cockrell School of Engineering</div>
+    <div class="header-sub">Texas Electrical Grid — CEM Microgrid Laboratory</div>
+  </div>
+</div>
+
+<!-- map -->
+<div id="map" role="application" aria-label="Interactive Texas grid map"></div>
+
+<!-- legend (clean: no heading) -->
+<div class="legend" aria-hidden="false">
+  <div class="row"><div class="sw" style="background:var(--tx345)"></div><div>345 kV</div></div>
+  <div class="row"><div class="sw" style="background:var(--tx138)"></div><div>138 / 230 kV</div></div>
+  <div class="row"><div class="dot" style="background:var(--gas)"></div><div>Gas Plant</div></div>
+  <div class="row"><div class="dot" style="background:var(--coal)"></div><div>Coal Plant</div></div>
+  <div class="row"><div class="dot" style="background:var(--wind)"></div><div>Wind Farm</div></div>
+  <div class="row"><div class="dot" style="background:var(--solar)"></div><div>Solar Farm</div></div>
+  <div class="row"><div class="dot" style="background:var(--nuclear)"></div><div>Nuclear Plant</div></div>
+  <div class="row"><div class="dot" style="background:var(--dc)"></div><div>Data Center</div></div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+/* --- Read CSS variables so JS uses exact palette --- */
+const css = getComputedStyle(document.documentElement);
+const COLORS = {
+  tx345: css.getPropertyValue('--tx345').trim() || '#BF5700',
+  tx138: css.getPropertyValue('--tx138').trim() || '#2b7aa1',
+  gas: css.getPropertyValue('--gas').trim() || '#ff8a33',
+  coal: css.getPropertyValue('--coal').trim() || '#7f7f7f',
+  wind: css.getPropertyValue('--wind').trim() || '#16a3b5',
+  solar: css.getPropertyValue('--solar').trim() || '#f2c94c',
+  nuclear: css.getPropertyValue('--nuclear').trim() || '#8a5fb0',
+  dc: css.getPropertyValue('--dc').trim() || '#2ca02c'
+};
+
+/* --- initialize map (map top already accounts for header via CSS top offset) --- */
+const map = L.map('map', { zoomControl: true }).setView([31.2, -98.5], 7);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '© OpenStreetMap' }).addTo(map);
+
+/* --- Example: inline simplified ERCOT-style GeoJSON (Option A) --- */
+/* NOTE: replace this block with your real GeoJSON later if you want */
+const TX_ERCOT = {
+  "type":"FeatureCollection",
+  "features":[
+    {"type":"Feature","properties":{"voltage":"345"},"geometry":{"type":"LineString","coordinates":[[-97.75,30.27],[-96.0,30.0],[-95.37,29.76]]}},
+    {"type":"Feature","properties":{"voltage":"345"},"geometry":{"type":"LineString","coordinates":[[-96.99,32.48],[-97.34,31.15],[-96.06,28.80]]}},
+    {"type":"Feature","properties":{"voltage":"138"},"geometry":{"type":"LineString","coordinates":[[-100.47,32.30],[-98.5,31.0],[-97.74,30.27]]}}
+  ]
+};
+
+/* --- GeoJSON layers for transmission (styled by voltage) --- */
+const transmissionLayer = L.geoJSON(TX_ERCOT, {
+  style: feature => {
+    const v = feature.properties && feature.properties.voltage;
+    return {
+      color: (v && String(v).includes('345')) ? COLORS.tx345 : COLORS.tx138,
+      weight: (v && String(v).includes('345')) ? 4.0 : 3.0,
+      opacity: 0.95
+    };
+  }
+});
+
+/* --- plants and datacenters sample features (include commission_year if desired) --- */
+const PLANTS = {
+  "type":"FeatureCollection","features":[
+    {"type":"Feature","properties":{"name":"South Texas Nuclear","fuel":"Nuclear","year":1988},"geometry":{"type":"Point","coordinates":[-96.064,28.797]}},
+    {"type":"Feature","properties":{"name":"Panda Temple I","fuel":"Gas","year":2011},"geometry":{"type":"Point","coordinates":[-97.3428,31.1171]}},
+    {"type":"Feature","properties":{"name":"Roscoe Wind Farm","fuel":"Wind","year":2009},"geometry":{"type":"Point","coordinates":[-100.476,32.304]}}
+  ]
+};
+
+const DATACENTERS = {
+  "type":"FeatureCollection","features":[
+    {"type":"Feature","properties":{"name":"Google Midlothian DC","load":250,"year":2016},"geometry":{"type":"Point","coordinates":[-96.994,32.484]}},
+    {"type":"Feature","properties":{"name":"Meta Temple DC","load":200,"year":2017},"geometry":{"type":"Point","coordinates":[-97.346,31.15]}}
+  ]
+};
+
+/* --- helper to return color by fuel --- */
+function colorByFuel(fuel){
+  if(!fuel) return COLORS.gas;
+  switch(fuel.toLowerCase()){
+    case 'wind': return COLORS.wind;
+    case 'solar': return COLORS.solar;
+    case 'nuclear': return COLORS.nuclear;
+    case 'coal': return COLORS.coal;
+    case 'gas': return COLORS.gas;
+    default: return COLORS.gas;
+  }
+}
+
+/* --- create persistent LayerGroups (so toggles always work) --- */
+const txGroup = L.layerGroup().addTo(map);
+const plantsGroup = L.layerGroup().addTo(map);
+const dcsGroup = L.layerGroup().addTo(map);
+
+/* populate groups */
+function populateTransmission(){
+  txGroup.clearLayers();
+  txGroup.addLayer(transmissionLayer);
+}
+function populatePlants(){
+  plantsGroup.clearLayers();
+  const g = L.geoJSON(PLANTS, {
+    pointToLayer: (f,latlng) => L.circleMarker(latlng,{ radius:7, fillColor: colorByFuel(f.properties.fuel), color: colorByFuel(f.properties.fuel), weight:1, fillOpacity:0.95 }),
+    onEachFeature: (f,layer) => layer.bindPopup(`<b>${f.properties.name}</b><br>Fuel: ${f.properties.fuel}<br>Year: ${f.properties.year}`)
+  });
+  plantsGroup.addLayer(g);
+}
+function populateDCs(){
+  dcsGroup.clearLayers();
+  const g = L.geoJSON(DATACENTERS, {
+    pointToLayer: (f,latlng) => L.circleMarker(latlng,{ radius:8, fillColor: COLORS.dc, color: COLORS.dc, weight:1, fillOpacity:0.95 }),
+    onEachFeature: (f,layer) => layer.bindPopup(`<b>${f.properties.name}</b><br>Load: ${f.properties.load || 'N/A'} MW<br>Year: ${f.properties.year || 'N/A'}`)
+  });
+  dcsGroup.addLayer(g);
+}
+
+/* initial populate */
+populateTransmission();
+populatePlants();
+populateDCs();
+
+/* layer control (uses persistent groups) */
+L.control.layers(null, {
+  "Transmission Lines": txGroup,
+  "Power Plants": plantsGroup,
+  "Data Centers": dcsGroup
+}, { collapsed: false, position: 'topleft' }).addTo(map);
+
+/* add default visibility */
+txGroup.addTo(map);
+plantsGroup.addTo(map);
+dcsGroup.addTo(map);
+
+/* fit to content */
+const bounds = L.featureGroup([transmissionLayer, L.geoJSON(PLANTS), L.geoJSON(DATACENTERS)]).getBounds();
+if(bounds.isValid()) map.fitBounds(bounds.pad(0.12));
+
+</script>
+</body>
+</html>

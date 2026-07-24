@@ -1,0 +1,438 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>UT / CEM — Texas Microgrid Lab (Clean Layout + Texas Border)</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <!-- noUiSlider CSS -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/noUiSlider/15.7.0/nouislider.min.css"/>
+
+  <style>
+    :root{
+      /* Theme */
+      --ut-burnt: #BF5700;
+      --bg-muted: #f5f5f6;
+      --map-ui-bg: rgba(255,255,255,0.96);
+      --ui-border: rgba(0,0,0,0.06);
+      --text: #222;
+
+      /* Map layer colors */
+      --tx345: #BF5700;
+      --txlow: #2b7aa1;
+      --gas: #ff8a33;
+      --coal: #7f7f7f;
+      --wind: #16a3b5;
+      --solar: #f2c94c;
+      --nuclear: #8a5fb0;
+      --dc: #2ca02c;
+
+      /* Logo + legend + controls placement */
+      --logo-h: 70px;         /* change to 24px, 32px, 36px, etc. */
+      --logo-pad: 10px;       /* distance from top/left edges */
+      --legend-pad: 14px;     /* legend bottom/left padding */
+      --legend-h: 160px;      /* updated dynamically via JS */
+      --gap-above-legend: 30px;/* gap between controls and legend */
+    }
+
+    html,body {
+      height:100%;
+      margin:0;
+      padding:0;
+      font-family: Inter, Arial, Helvetica, sans-serif;
+      background:var(--bg-muted);
+      color:var(--text);
+      overflow:hidden;
+    }
+
+    /* Map full viewport */
+    #map {
+      height: 100vh;
+      width:100%;
+      margin:0;
+      padding:0;
+      position:relative;
+    }
+
+    /* Top-left logo overlay (transparent) */.logo-overlay {
+      position: absolute;
+      top: var(--logo-pad);
+      left: var(--logo-pad);
+      z-index: 1300;
+      background: transparent;
+      padding: 0;
+      pointer-events: none; /* allow map drag underneath */
+    }.logo-overlay.logo-img {
+      height: var(--logo-h);
+      width: auto;
+      display: block;
+      background: transparent;
+      /* Optional blend:
+         mix-blend-mode: multiply; */
+    }
+
+    /* Legend - bottom-left */.legend-box {
+      position: absolute;
+      left: var(--legend-pad);
+      bottom: var(--legend-pad);
+      z-index: 1100;
+      background: var(--map-ui-bg);
+      padding: 10px;
+      border-radius: 10px;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.12);
+      border: 1px solid var(--ui-border);
+      width: 260px;
+    }.legend-row { display:flex; align-items:center; gap:10px; margin:6px 0; font-size:13px; }.legend-swatch { width:22px; height:12px; border-radius:3px; border:1px solid rgba(0,0,0,0.06); }.legend-circle { width:14px; height:14px; border-radius:50%; display:inline-block; margin-right:6px; }
+
+    /* Controls (bottom-right) */.controls-box {
+      position: absolute;
+      right: 14px;
+      bottom: 14px;
+      z-index: 1200;
+      background: var(--map-ui-bg);
+      padding: 10px;
+      border-radius: 10px;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.12);
+      border: 1px solid var(--ui-border);
+      width: 180px;
+      text-align: center;
+    }.controls-box button {
+      display:block; width:100%; margin:6px 0; padding:8px 10px;
+      border-radius:8px; border:1px solid var(--ui-border);
+      background:white; cursor:pointer; font-weight:600; color:var(--text);
+    }.controls-box button.primary { background:var(--ut-burnt); color:#fff; border:none; }
+
+    /* Timeline slider bottom-center */.timeline-overlay {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      bottom: 14px;
+      z-index: 1200;
+      background: var(--map-ui-bg);
+      padding: 8px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--ui-border);
+      box-shadow: 0 6px 18px rgba(0,0,0,0.08);
+      display:flex; gap:12px; align-items:center;
+    }.timeline-label { font-weight:700; color:var(--text); min-width:54px; }
+    #slider { width:420px; max-width:60vw; }
+
+    /* MOVE BOTH zoom and layers container to bottom-left ABOVE legend */.leaflet-bottom.leaflet-left {
+      bottom: calc(var(--legend-pad) + var(--legend-h) + var(--gap-above-legend));
+      left: var(--legend-pad);
+      z-index: 1201; /* higher than legend (1100) so they render above */
+    }
+
+    /* Optional: hide attribution (ensure compliance with tile provider) */.leaflet-control-attribution { display: none; }.leaflet-popup-content-wrapper { font-size:13px; }
+  </style>
+</head>
+<body>
+  <!-- Transparent, shrunk logo overlay -->
+  <div class="logo-overlay">
+    <img class="logo-img" src="ut_cem_logo.png" alt="UT CEM logo"
+         style="height: var(--logo-h); width: auto;"/>
+  </div>
+
+  <!-- Map -->
+  <div id="map" role="application" aria-label="Interactive Texas Grid Map"></div>
+
+  <!-- Timeline slider -->
+  <div class="timeline-overlay" aria-hidden="false">
+    <div class="timeline-label">Year</div>
+    <div id="slider"></div>
+    <div id="sliderValue" style="min-width:56px; text-align:center; font-weight:700;">2025</div>
+  </div>
+
+  <!-- Legend -->
+  <div class="legend-box" id="legend" aria-hidden="false">
+    <div class="legend-row"><div class="legend-swatch" style="background:var(--tx345)"></div><div>Transmission — 345 kV</div></div>
+    <div class="legend-row"><div class="legend-swatch" style="background:var(--txlow)"></div><div>Transmission — 138/230 kV</div></div>
+    <div class="legend-row"><div class="legend-circle" style="background:var(--gas)"></div><div>Gas Plant</div></div>
+    <div class="legend-row"><div class="legend-circle" style="background:var(--coal)"></div><div>Coal Plant</div></div>
+    <div class="legend-row"><div class="legend-circle" style="background:var(--wind)"></div><div>Wind Farm</div></div>
+    <div class="legend-row"><div class="legend-circle" style="background:var(--solar)"></div><div>Solar Farm</div></div>
+    <div class="legend-row"><div class="legend-circle" style="background:var(--nuclear)"></div><div>Nuclear Plant</div></div>
+    <div class="legend-row"><div class="legend-swatch" style="background:var(--dc); width:14px; height:14px; border-radius:3px;"></div><div>Data Center (major)</div></div>
+  </div>
+
+  <!-- Controls -->
+  <div class="controls-box" role="region" aria-label="Map controls">
+    <button id="playPauseBtn" class="primary">⏯ Play Flows</button>
+    <button id="resetViewBtn">🔄 Reset View</button>
+  </div>
+
+  <!-- JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/noUiSlider/15.7.0/nouislider.min.js"></script>
+  <!-- Esri Leaflet (for Texas border) -->
+  <script src="https://unpkg.com/esri-leaflet@3.0.11/dist/esri-leaflet.js"></script>
+
+  <script>
+  /************************************************************************
+   * UT / CEM — Clean Layout + Texas Border Overlay
+   ************************************************************************/
+
+  /* Demo GeoJSON */
+  const TX_ERCOT_TRANSMISSION = { "type": "FeatureCollection", "features": [
+    {"type":"Feature","properties":{"voltage":"345","owner":"ONCOR"},"geometry":{"type":"LineString","coordinates":[[-96.8,32.78],[-97.14,32.2],[-97.74,30.267]]}},
+    {"type":"Feature","properties":{"voltage":"345","owner":"AEP"},"geometry":{"type":"LineString","coordinates":[[-97.74,30.267],[-96.1,30.0],[-95.37,29.76]]}},
+    {"type":"Feature","properties":{"voltage":"345","owner":"CPS"},"geometry":{"type":"LineString","coordinates":[[-98.49,29.42],[-97.7431,30.2672]]}},
+    {"type":"Feature","properties":{"voltage":"230","owner":"Oncor"},"geometry":{"type":"LineString","coordinates":[[-100.48,32.30],[-98.0,31.0],[-97.74,30.27]]}},
+    {"type":"Feature","properties":{"voltage":"345","owner":"ERCOT"},"geometry":{"type":"LineString","coordinates":[[-95.37,29.76],[-94.80,29.80],[-94.0,30.0]]}},
+    {"type":"Feature","properties":{"voltage":"138","owner":"AEP"},"geometry":{"type":"LineString","coordinates":[[-97.3,31.1],[-96.1,30.0]]}},
+    {"type":"Feature","properties":{"voltage":"345","owner":"Oncor"},"geometry":{"type":"LineString","coordinates":[[-96.99,32.48],[-96.4,31.9],[-97.34,31.15]]}},
+    {"type":"Feature","properties":{"voltage":"230","owner":"ERCOT"},"geometry":{"type":"LineString","coordinates":[[-99.19,27.50],[-98.40,29.45]]}},
+    {"type":"Feature","properties":{"voltage":"138","owner":"AEP"},"geometry":{"type":"LineString","coordinates":[[-100.48,32.30],[-99.5,31.6],[-98.5,31.0]]}},
+    {"type":"Feature","properties":{"voltage":"345","owner":"ERCOT"},"geometry":{"type":"LineString","coordinates":[[-97.74,30.27],[-97.598,30.279]]}},
+    {"type":"Feature","properties":{"voltage":"138","owner":"Local"},"geometry":{"type":"LineString","coordinates":[[-96.8,32.78],[-96.99,32.48]]}},
+    {"type":"Feature","properties":{"voltage":"230","owner":"Local"},"geometry":{"type":"LineString","coordinates":[[-95.37,29.76],[-96.06,28.80]]}}
+  ]};
+
+  const TX_PLANTS = { "type":"FeatureCollection","features":[
+    {"type":"Feature","properties":{"name":"South Texas Nuclear","fuel":"Nuclear","capacity":2500,"commission_year":1988},"geometry":{"type":"Point","coordinates":[-96.064,28.797]}},
+    {"type":"Feature","properties":{"name":"Panda Temple I","fuel":"Gas","capacity":758,"commission_year":2011},"geometry":{"type":"Point","coordinates":[-97.3428,31.1171]}},
+    {"type":"Feature","properties":{"name":"Roscoe Wind Farm","fuel":"Wind","capacity":781,"commission_year":2009},"geometry":{"type":"Point","coordinates":[-100.476,32.304]}},
+    {"type":"Feature","properties":{"name":"Large Solar Farm","fuel":"Solar","capacity":400,"commission_year":2018},"geometry":{"type":"Point","coordinates":[-99.193,27.506]}},
+    {"type":"Feature","properties":{"name":"Austin Energy Decker","fuel":"Gas","capacity":900,"commission_year":2000},"geometry":{"type":"Point","coordinates":[-97.598,30.279]}}
+  ]};
+
+  const TX_DATACENTERS = { "type":"FeatureCollection","features":[
+    {"type":"Feature","properties":{"name":"Google Midlothian DC","load":250,"commission_year":2016},"geometry":{"type":"Point","coordinates":[-96.994,32.484]}},
+    {"type":"Feature","properties":{"name":"Meta Temple DC","load":200,"commission_year":2017},"geometry":{"type":"Point","coordinates":[-97.346,31.15]}},
+    {"type":"Feature","properties":{"name":"Microsoft San Antonio DC","load":180,"commission_year":2019},"geometry":{"type":"Point","coordinates":[-98.395,29.457]}}
+  ]};
+
+  /* Map initialization: disable default zoom (we add our own at bottom-left) */
+  const map = L.map('map', { zoomControl: false, attributionControl: true }).setView([31.0, -99.0], 6);
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 18,
+    attribution: '© OpenStreetMap contributors'
+  }).addTo(map);
+
+  /* Add zoom control at bottom-left */
+  L.control.zoom({ position: 'bottomleft' }).addTo(map);
+
+  /* Layer groups */
+  const transmissionGroup = L.layerGroup().addTo(map);
+  const plantsGroup = L.layerGroup().addTo(map);
+  const dcsGroup = L.layerGroup().addTo(map);
+
+  /* Styles from CSS variables */
+  const css = getComputedStyle(document.documentElement);
+  const styles = {
+    tx345: css.getPropertyValue('--tx345').trim() || '#BF5700',
+    txlow: css.getPropertyValue('--txlow').trim() || '#2b7aa1',
+    gas: css.getPropertyValue('--gas').trim() || '#ff8a33',
+    coal: css.getPropertyValue('--coal').trim() || '#7f7f7f',
+    wind: css.getPropertyValue('--wind').trim() || '#16a3b5',
+    solar: css.getPropertyValue('--solar').trim() || '#f2c94c',
+    nuclear: css.getPropertyValue('--nuclear').trim() || '#8a5fb0',
+    dc: css.getPropertyValue('--dc').trim() || '#2ca02c'
+  };
+
+  function populateTransmission() {
+    transmissionGroup.clearLayers();
+    const tx = L.geoJSON(TX_ERCOT_TRANSMISSION, {
+      style: f => ({
+        color: (f.properties && f.properties.voltage === "345") ? styles.tx345 : styles.txlow,
+        weight: (f.properties && f.properties.voltage === "345") ? 3.2 : 2.0,
+        opacity: 0.95
+      })
+    });
+    transmissionGroup.addLayer(tx);
+  }
+
+  function plantColor(fuel) {
+    if (!fuel) return styles.gas;
+    switch ((fuel || '').toLowerCase()) {
+      case 'wind': return styles.wind;
+      case 'solar': return styles.solar;
+      case 'nuclear': return styles.nuclear;
+      case 'coal': return styles.coal;
+      case 'gas': return styles.gas;
+      default: return styles.gas;
+    }
+  }
+
+  function populatePlants(year) {
+    plantsGroup.clearLayers();
+    const filtered = {
+      type: 'FeatureCollection',
+      features: TX_PLANTS.features.filter(f => (f.properties && (f.properties.commission_year || 9999) <= year))
+    };
+    const pfl = L.geoJSON(filtered, {
+      pointToLayer: (feature, latlng) => L.circleMarker(latlng, { radius: 7, fillOpacity: 0.95, color: plantColor(feature.properties.fuel), weight: 1 }),
+      onEachFeature: (feature, layer) => {
+        const p = feature.properties || {};
+        layer.bindPopup(`<b>${p.name || 'Plant'}</b><br>Fuel: ${p.fuel || 'N/A'}<br>Capacity: ${p.capacity || 'N/A'} MW<br>Year: ${p.commission_year || 'N/A'}`);
+      }
+    });
+    plantsGroup.addLayer(pfl);
+  }
+
+  function populateDCs(year) {
+    dcsGroup.clearLayers();
+    const filtered = {
+      type: 'FeatureCollection',
+      features: TX_DATACENTERS.features.filter(f => (f.properties && (f.properties.commission_year || 9999) <= year))
+    };
+    const dcl = L.geoJSON(filtered, {
+      pointToLayer: (feature, latlng) => L.circleMarker(latlng, { radius: 9, fillOpacity: 0.95, color: styles.dc, weight: 1.2 }),
+      onEachFeature: (feature, layer) => {
+        const p = feature.properties || {};
+        layer.bindPopup(`<b>${p.name || 'Data Center'}</b><br>Load: ${p.load || 'N/A'} MW<br>Year: ${p.commission_year || 'N/A'}`);
+      }
+    });
+    dcsGroup.addLayer(dcl);
+  }
+
+  const allYears = [].concat(
+    TX_PLANTS.features.map(f => f.properties.commission_year || 9999),
+    TX_DATACENTERS.features.map(f => f.properties.commission_year || 9999)
+  );
+  const minYear = Math.min(...allYears, 1990);
+  const maxYear = Math.max(...allYears, new Date().getFullYear());
+
+  populateTransmission();
+  populatePlants(maxYear);
+  populateDCs(maxYear);
+
+  /* Texas border overlay (Esri USA States) */
+  const URL_USA_STATES = 'https://services.arcgis.com/P3ePLMYs2RVChkJx/ArcGIS/rest/services/USA_States_Generalized/FeatureServer/0';
+  const texasBorder = L.esri.featureLayer({
+    url: URL_USA_STATES,
+    where: "STATE_NAME = 'Texas'",
+    style: function () {
+      return { color: '#333', weight: 2.5, fillOpacity: 0, opacity: 1.0 };
+    }
+  }).addTo(map);
+
+  /* Layer control at bottom-left (positioned above legend by CSS) */
+  const overlays = {
+    "Transmission Lines": transmissionGroup,
+    "Power Plants": plantsGroup,
+    "Data Centers": dcsGroup,
+    "Texas Border": texasBorder
+  };
+  L.control.layers(null, overlays, { collapsed: false, position: 'bottomleft' }).addTo(map);
+
+  /* Flow particles (demo) */
+  const flowMarkersGroup = L.layerGroup().addTo(map);
+  const flows = [];
+
+  function resetFlows() {
+    flowMarkersGroup.clearLayers();
+    flows.length = 0;
+    transmissionGroup.eachLayer(layer => {
+      const addFlowsForLine = (lineLayer) => {
+        if (!(lineLayer && lineLayer.feature && lineLayer.feature.geometry && lineLayer.feature.geometry.type === 'LineString')) return;
+        const coords = lineLayer.feature.geometry.coordinates;
+        const dx = coords[coords.length-1][0] - coords[0][0];
+        const dy = coords[coords.length-1][1] - coords[0][1];
+        const baseCount = Math.max(1, Math.round(Math.hypot(dx, dy) * 4));
+        for (let p = 0; p < baseCount; p++) {
+          const start = p / baseCount;
+          const speed = 0.0008 + Math.random() * 0.0012;
+          const col = (lineLayer.feature.properties && lineLayer.feature.properties.voltage === "345") ? styles.tx345 : styles.txlow;
+          const marker = L.circleMarker([coords[0][1], coords[0][0]], { radius: 3.0, fillOpacity: 0.95, color: col, weight: 0.7 }).addTo(flowMarkersGroup);
+          flows.push({ coords, progress: start, speed, marker });
+        }
+      };
+      if (layer.getLayers) { layer.eachLayer(addFlowsForLine); }
+      else { addFlowsForLine(layer); }
+    });
+  }
+
+  function interpolatePoint(coords, t) {
+    if (!coords || coords.length === 0) return null;
+    if (t <= 0) return coords[0];
+    if (t >= 1) return coords[coords.length - 1];
+    const segLens = []; let total = 0;
+    for (let i = 1; i < coords.length; i++) {
+      const dx = coords[i][0] - coords[i - 1][0];
+      const dy = coords[i][1] - coords[i - 1][1];
+      const L = Math.hypot(dx, dy);
+      segLens.push(L); total += L;
+    }
+    let target = t * total, cum = 0;
+    for (let i = 0; i < segLens.length; i++) {
+      if (cum + segLens[i] >= target) {
+        const r = (target - cum) / segLens[i];
+        const a = coords[i], b = coords[i + 1];
+        return [a[0] + (b[0] - a[0]) * r, a[1] + (b[1] - a[1]) * r];
+      }
+      cum += segLens[i];
+    }
+    return coords[coords.length - 1];
+  }
+
+  let animRunning = false, lastTime = null;
+  function animateFlows(timestamp) {
+    if (!animRunning) { lastTime = null; return; }
+    if (!lastTime) lastTime = timestamp;
+    const dt = timestamp - lastTime; lastTime = timestamp;
+    const factor = dt / 16.67;
+    flows.forEach(f => {
+      f.progress += f.speed * factor;
+      if (f.progress > 1) f.progress -= Math.floor(f.progress);
+      const pt = interpolatePoint(f.coords, f.progress);
+      if (pt) f.marker.setLatLng([pt[1], pt[0]]);
+    });
+    requestAnimationFrame(animateFlows);
+  }
+
+  document.getElementById('playPauseBtn').addEventListener('click', () => {
+    animRunning = !animRunning;
+    document.getElementById('playPauseBtn').textContent = animRunning ? '⏸ Pause Flows' : '⏯ Play Flows';
+    if (animRunning) requestAnimationFrame(animateFlows);
+    else lastTime = null;
+  });
+
+  document.getElementById('resetViewBtn').addEventListener('click', () => map.setView([31.0, -99.0], 6));
+
+  resetFlows();
+
+  /* Timeline slider */
+  const slider = document.getElementById('slider');
+  const sliderValue = document.getElementById('sliderValue');
+
+  noUiSlider.create(slider, {
+    start: [maxYear],
+    connect: true,
+    step: 1,
+    range: { min: minYear, max: maxYear },
+    tooltips: true,
+    format: { to: v => Math.round(v), from: v => Number(v) }
+  });
+
+  slider.noUiSlider.on('update', (values, handle) => {
+    const y = parseInt(values[handle], 10);
+    sliderValue.textContent = y;
+    populatePlants(y);
+    populateDCs(y);
+  });
+
+  slider.noUiSlider.set(maxYear);
+
+  /* Fit map to content */
+  const bounds = L.featureGroup([transmissionGroup, plantsGroup, dcsGroup]).getBounds();
+  if (bounds.isValid()) {
+    map.fitBounds(bounds.pad(0.12));
+  }
+
+  /* Dynamically set legend height for accurate control offset */
+  function updateLegendHeightOffset() {
+    const legend = document.getElementById('legend');
+    if (!legend) return;
+    const h = legend.offsetHeight;
+    document.documentElement.style.setProperty('--legend-h', h + 'px');
+  }
+  window.addEventListener('load', updateLegendHeightOffset);
+  window.addEventListener('resize', updateLegendHeightOffset);
+  setTimeout(updateLegendHeightOffset, 250); // extra pass after fonts load
+  </script>
+</body>
+</html>
