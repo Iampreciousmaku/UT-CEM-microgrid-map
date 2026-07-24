@@ -837,7 +837,7 @@
   });
 
   noUiSlider.create(slider, {
-    start: [minYear],
+    start: [maxYear],
     connect: true,
     step: 1,
     range: { min: minYear, max: maxYear },
@@ -852,7 +852,7 @@
     populateDCs(y);
   });
 
-  slider.noUiSlider.set(minYear);
+  slider.noUiSlider.set(maxYear);
 
   /* Fit map to content */
   const bounds = L.featureGroup([plantsGroup, dcsGroup, transmissionGroup]).getBounds();
